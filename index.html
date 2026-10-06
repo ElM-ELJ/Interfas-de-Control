@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Testing Workbench - Microcontroller Hardware Inspection Panel</title>
+  <meta name="description" content="Panel de control e inspección de hardware para microcontroladores (Arduino, ESP32, Raspberry Pi Pico) mediante Web Serial API.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="dark-theme">
+  <div class="app-container">
+    <!-- TOP HEADER / CONTROL BAR -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="2" width="20" height="20" rx="4" />
+            <line x1="6" y1="6" x2="6" y2="6.01" stroke-width="3" />
+            <line x1="18" y1="6" x2="18" y2="6.01" stroke-width="3" />
+            <line x1="6" y1="18" x2="6" y2="18.01" stroke-width="3" />
+            <line x1="18" y1="18" x2="18" y2="18.01" stroke-width="3" />
+            <path d="M9 12h6M12 9v6" />
+          </svg>
+        </div>
+        <div>
+          <h1>HARDWARE WORKBENCH <span class="version-tag">v2.4 ACADEMIC 10/10</span></h1>
+          <p class="subtitle">Interfaces de Control & Inspección Universal de Hardware</p>
+        </div>
+      </div>
+
+      <div class="header-academic-actions">
+        <button id="btn-guided-demo" class="btn btn-demo-pulse" onclick="WorkbenchApp.startGuidedDemo()">
+          <span>🎓 Demostración Guiada (1-Click)</span>
+        </button>
+        <button id="btn-open-report" class="btn btn-report-gold" onclick="WorkbenchApp.openAcademicReportModal()">
+          <span>📄 Reporte de Evaluación (PDF)</span>
+        </button>
+      </div>
+
+      <div class="serial-controls">
+        <div class="control-group">
+          <label for="mcu-select">Tarjeta / MCU:</label>
+          <select id="mcu-select" class="custom-select" onchange="WorkbenchApp.onMcuChange(this.value)">
+            <option value="esp32">ESP32 DevKit (Dual-Core)</option>
+            <option value="esp8266">ESP8266 NodeMCU</option>
+            <option value="arduino_uno" selected>Arduino Uno / Nano (ATmega328P)</option>
+            <option value="arduino_mega">Arduino Mega 2560 (ATmega2560)</option>
+            <option value="stm32">STM32 Blue Pill (ARM Cortex-M3)</option>
+            <option value="pico_cpp">Raspberry Pi Pico (C++ / Pico SDK)</option>
+            <option value="pico_py">Raspberry Pi Pico (MicroPython)</option>
+            <option value="generic">Placa Serial Genérica / Custom</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label for="protocol-select">Protocolo:</label>
+          <select id="protocol-select" class="custom-select protocol-select">
+            <option value="json" selected>📦 JSON Auto-Detect</option>
+            <option value="csv">📊 CSV (Separado por Comas)</option>
+            <option value="keyvalue">🔑 Key-Value (T=24.5;H=58)</option>
+            <option value="raw">🔤 Texto Plano / ACK</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label for="baud-select">Baud Rate:</label>
+          <select id="baud-select" class="custom-select">
+            <option value="9600">9600 baud</option>
+            <option value="19200">19200 baud</option>
+            <option value="38400">38400 baud</option>
+            <option value="57600">57600 baud</option>
+            <option value="115200" selected>115200 baud</option>
+            <option value="230400">230400 baud</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label for="mode-select">Modo:</label>
+          <select id="mode-select" class="custom-select mode-select">
+            <option value="usb" selected>🔌 Puerto USB Real</option>
+            <option value="mock">⚡ Simulador Virtual</option>
+          </select>
+        </div>
+
+        <button id="btn-connect" class="btn btn-connect">
+          <span class="btn-icon">🔌</span>
+          <span id="btn-connect-text">Conectar Puerto</span>
+        </button>
+
+        <div class="status-badge disconnected" id="connection-status">
+          <span class="status-dot"></span>
+          <span id="status-text">Desconectado</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- COMPATIBILITY ALERT (hidden if supported or in mock mode) -->
+    <div id="browser-warning" class="alert-banner warning-banner hidden">
+      <span class="alert-icon">⚠️</span>
+      <span>Tu navegador no soporta <strong>Web Serial API</strong>. Se ha activado automáticamente el <strong>Simulador Virtual</strong> para pruebas. Usa Chrome, Edge u Opera para hardware USB real.</span>
+      <button class="btn-close" onclick="document.getElementById('browser-warning').classList.add('hidden')">✕</button>
+    </div>
+
+    <!-- GUIDED DEMO TOAST BANNER -->
+    <div id="demo-toast-banner" class="demo-toast hidden">
+      <div class="demo-toast-icon">🎓</div>
+      <div class="demo-toast-body">
+        <h4 id="demo-step-title">Modo Exposición: Paso 1 de 5</h4>
+        <p id="demo-step-desc">Probando control digital y modulación PWM en actuadores...</p>
+      </div>
+      <button class="btn btn-sm btn-secondary" onclick="WorkbenchApp.stopGuidedDemo()">Detener Demo</button>
+    </div>
+
+    <!-- MAIN DASHBOARD CONTENT -->
+    <main class="dashboard-grid">
+      <!-- LEFT / NAVIGATION TABS PANEL -->
+      <nav class="nav-tabs" role="tablist">
+        <button class="tab-btn active" data-tab="actuators" role="tab" id="tab-actuators-btn">
+          <span class="tab-icon">⚡</span>
+          <span class="tab-label">Actuadores</span>
+        </button>
+        <button class="tab-btn" data-tab="sensors" role="tab" id="tab-sensors-btn">
+          <span class="tab-icon">🌡️</span>
+          <span class="tab-label">Sensores</span>
+        </button>
+        <button class="tab-btn" data-tab="motors" role="tab" id="tab-motors-btn">
+          <span class="tab-icon">⚙️</span>
+          <span class="tab-label">Motores</span>
+        </button>
+        <button class="tab-btn" data-tab="diagnostics" role="tab" id="tab-diagnostics-btn">
+          <span class="tab-icon">🩺</span>
+          <span class="tab-label">Diagnóstico & Salud</span>
+        </button>
+        <button class="tab-btn" data-tab="console" role="tab" id="tab-console-btn">
+          <span class="tab-icon">💻</span>
+          <span class="tab-label">Monitor Serial</span>
+        </button>
+        <button class="tab-btn" data-tab="firmware" role="tab" id="tab-firmware-btn">
+          <span class="tab-icon">📟</span>
+          <span class="tab-label">Código Firmware</span>
+        </button>
+      </nav>
+
+      <!-- TAB CONTENT AREA -->
+      <section class="tab-content-area">
+        
+        <!-- 1. ACTUATORS TAB -->
+        <div id="tab-actuators" class="tab-pane active" role="tabpanel">
+          <div class="panel-header">
+            <h2>Pruebas de Actuadores Básicos</h2>
+            <p>Envío directo de señales digitales y PWM para control de indicadores, alarmas y conmutación de carga.</p>
+          </div>
+
+          <div class="cards-grid">
+            <!-- LED CARD -->
+            <div class="component-card">
+              <div class="card-header">
+                <div class="component-title">
+                  <span class="comp-icon">💡</span>
+                  <div>
+                    <h3>LED Principal (Pin D13 / GPIO2)</h3>
+                    <span class="pin-tag">Digital / PWM</span>
+                  </div>
+                </div>
+                <div class="indicator-led" id="led-indicator"></div>
+              </div>
+
+              <div class="card-body">
+                <div class="action-row">
+                  <button class="btn btn-action" id="btn-led-toggle" onclick="WorkbenchApp.toggleLed()">
+                    <span>Inyectar ON/OFF</span>
+                  </button>
+                  <button class="btn btn-secondary" id="btn-led-blink" onclick="WorkbenchApp.blinkLed()">
+                    <span>Parpadeo (500ms)</span>
+                  </button>
+                </div>
+
+                <div class="slider-group">
+                  <div class="slider-header">
+                    <label for="led-pwm-slider">Brillo PWM (0-255):</label>
+                    <span id="led-pwm-val" class="value-badge">128</span>
+                  </div>
+                  <input type="range" id="led-pwm-slider" min="0" max="255" value="128" oninput="WorkbenchApp.updateLedPwm(this.value)">
+                </div>
+              </div>
+
+              <div class="card-footer">
+                <span class="cmd-preview">Trama: <code id="led-cmd-code">SET:LED:1</code></span>
+              </div>
+            </div>
+
+            <!-- BUZZER CARD -->
+            <div class="component-card">
+              <div class="card-header">
+                <div class="component-title">
+                  <span class="comp-icon">🔊</span>
+                  <div>
+                    <h3>Piezo Buzzer (Pin D8 / GPIO18)</h3>
+                    <span class="pin-tag">Frecuencia PWM</span>
+                  </div>
+                </div>
+                <span class="status-pill" id="buzzer-status">Inactivo</span>
+              </div>
+
+              <div class="card-body">
+                <div class="slider-group">
+                  <div class="slider-header">
+                    <label for="buzzer-freq">Frecuencia (Hz):</label>
+                    <span id="buzzer-freq-val" class="value-badge">1000 Hz</span>
+                  </div>
+                  <input type="range" id="buzzer-freq" min="200" max="4000" step="50" value="1000" oninput="document.getElementById('buzzer-freq-val').innerText = this.value + ' Hz'">
+                </div>
+
+                <div class="slider-group">
+                  <div class="slider-header">
+                    <label for="buzzer-dur">Duración (ms):</label>
+                    <span id="buzzer-dur-val" class="value-badge">300 ms</span>
+                  </div>
+                  <input type="range" id="buzzer-dur" min="50" max="2000" step="50" value="300" oninput="document.getElementById('buzzer-dur-val').innerText = this.value + ' ms'">
+                </div>
+
+                <div class="action-row">
+                  <button class="btn btn-action" id="btn-buzzer-test" onclick="WorkbenchApp.testBuzzer()">
+                    🔔 Inyectar Tono
+                  </button>
+                  <button class="btn btn-secondary" onclick="WorkbenchApp.presetBuzzer('alarm')">🚨 Alarma</button>
+                  <button class="btn btn-secondary" onclick="WorkbenchApp.presetBuzzer('chime')">✨ Chime</button>
+                </div>
+              </div>
+
+              <div class="card-footer">
+                <span class="cmd-preview">Trama: <code id="buzzer-cmd-code">SET:BUZZER:1000:300</code></span>
+              </div>
+            </div>
+
+            <!-- RELAY CARD -->
+            <div class="component-card">
+              <div class="card-header">
+                <div class="component-title">
+                  <span class="comp-icon">🔌</span>
+                  <div>
+                    <h3>Módulo Relé (Pin D7 / GPIO5)</h3>
+                    <span class="pin-tag">Conmutación 250V AC</span>
+                  </div>
+                </div>
+                <div class="relay-state-badge" id="relay-state-badge">ABIERT (OFF)</div>
+              </div>
+
+              <div class="card-body">
+                <div class="relay-controls">
+                  <div class="relay-toggle-box">
+                    <span>Relé Canal 1</span>
+                    <label class="switch">
+                      <input type="checkbox" id="relay-ch1-toggle" onchange="WorkbenchApp.toggleRelay(1, this.checked)">
+                      <span class="slider-toggle"></span>
+                    </label>
+                  </div>
+                  <div class="relay-toggle-box">
+                    <span>Relé Canal 2</span>
+                    <label class="switch">
+                      <input type="checkbox" id="relay-ch2-toggle" onchange="WorkbenchApp.toggleRelay(2, this.checked)">
+                      <span class="slider-toggle"></span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="action-row" style="margin-top: 15px;">
+                  <button class="btn btn-action" onclick="WorkbenchApp.pulseRelay(1)">
+                    ⚡ Pulso de Prueba (500ms)
+                  </button>
+                </div>
+              </div>
+
+              <div class="card-footer">
+                <span class="cmd-preview">Trama: <code id="relay-cmd-code">SET:RELAY:1:1</code></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. SENSORS TAB -->
+        <div id="tab-sensors" class="tab-pane" role="tabpanel">
+          <div class="panel-header">
+            <h2>Adquisición y Lectura de Sensores</h2>
+            <p>Mapeo de señales analógicas y digitales con visualizadores numéricos y gráficos en tiempo real.</p>
+          </div>
+
+          <div class="cards-grid">
+            <!-- DHT SENSOR CARD -->
+            <div class="component-card">
+              <div class="card-header">
+                <div class="component-title">
+                  <span class="comp-icon">🌡️</span>
+                  <div>
+                    <h3>Sensor DHT11 / DHT22</h3>
+                    <span class="pin-tag">Digital Pin D4</span>
+                  </div>
+                </div>
+                <button class="btn btn-sm btn-action" onclick="WorkbenchApp.readDht()">🔄 Leer Sensor</button>
+              </div>
+
+              <div class="card-body">
+                <div class="sensor-readings-row">
+                  <div class="gauge-box">
+                    <span class="gauge-label">Temperatura</span>
+                    <div class="gauge-val" id="dht-temp-val">24.5 <span class="unit">°C</span></div>
+                    <div class="meter-bar-track">
+                      <div class="meter-bar-fill temp-fill" id="dht-temp-bar" style="width: 49%;"></div>
+                    </div>
+                  </div>
+
+                  <div class="gauge-box">
+                    <span class="gauge-label">Humedad</span>
+                    <div class="gauge-val" id="dht-hum-val">58.0 <span class="unit">%</span></div>
+                    <div class="meter-bar-track">
+                      <div class="meter-bar-fill hum-fill" id="dht-hum-bar" style="width: 58%;"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="auto-poll-box">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="auto-poll-dht" onchange="WorkbenchApp.toggleAutoPoll('dht', this.checked)">
+                    <span>Lectura Continua Auto-Poll (Cada 3s)</span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="card-footer">
+                <span class="cmd-preview">Trama: <code>GET:DHT</code></span>
+              </div>
+            </div>
+
+            <!-- ULTRASONIC SENSOR CARD -->
+            <div class="component-card">
+              <div class="card-header">
+                <div class="component-title">
+                  <span class="comp-icon">📏</span>
+                  <div>
+                    <h3>Sensor Ultrasónico HC-SR04</h3>
+                    <span class="pin-tag">Trig: D11 | Echo: D12</span>
+                  </div>
+                </div>
+                <button class="btn btn-sm btn-action" onclick="WorkbenchApp.readDistance()">📏 Medir Distancia</button>
+              </div>
+
+              <div class="card-body">
+                <div class="distance-display-box">
+                  <div class="big-numeric-display">
+                    <span id="dist-val">42.8</span> <span class="unit">cm</span>
+                  </div>
+                  <span class="dist-status" id="dist-status">🟢 Zona Segura (>20cm)</span>
+                </div>
+
+                <div class="distance-visual-container">
+                  <div class="sensor-emitter">📡</div>
+                  <div class="distance-beam-track">
+                    <div class="distance-beam-fill" id="dist-bar-fill" style="width: 42%;"></div>
+                  </div>
+                  <div class="obstacle-wall">🧱</div>
+                </div>
+              </div>
+
+              <div class="card-footer">
+                <span class="cmd-preview">Trama: <code>GET:DIST</code></span>
+              </div>
+            </div>
+
+            <!-- LDR LIGHT SENSOR CARD -->
+            <div class="component-card">
+              <div class="card-header">
+                <div class="component-title">
+                  <span class="comp-icon">☀️</span>
+                  <div>
+                    <h3>Fotorresistencia LDR</h3>
+                    <span class="pin-tag">Analógico A0 / GPIO34</span>
+                  </div>
+                </div>
+                <button class="btn btn-sm btn-action" onclick="WorkbenchApp.readLdr()">☀️ Leer Luz</button>
+              </div>
+
+              <div class="card-body">
+                <div class="sensor-readings-row">
+                  <div class="gauge-box full-width">
+                    <div class="gauge-header">
+                      <span class="gauge-label">Nivel de Iluminación</span>
+                      <span class="gauge-subval" id="ldr-raw-val">RAW: 680 / 1023</span>
+                    </div>
+                    <div class="gauge-val" id="ldr-percent-val">66.5 <span class="unit">% LUX</span></div>
+                    <div class="meter-bar-track">
+                      <div class="meter-bar-fill lux-fill" id="ldr-bar-fill" style="width: 66.5%;"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card-footer">
+                <span class="cmd-preview">Trama: <code>GET:LDR</code></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. MOTORS TAB -->
+        <div id="tab-motors" class="tab-pane" role="tabpanel">
+          <div class="panel-header">
+            <h2>Control y Diagnóstico de Motores</h2>
+            <p>Generación de pulsos de servo y modulación de ancho de pulso PWM para motores DC.</p>
+          </div>
+
+          <div class="cards-grid">
+            <!-- SERVO MOTOR CARD -->
+            <div class="component-card">
+              <div class="card-header">
+                <div class="component-title">
+                  <span class="comp-icon">🎯</span>
+                  <div>
+                    <h3>Servomotor SG90 / MG996R</h3>
+                    <span class="pin-tag">PWM Pin D9</span>
+                  </div>
+                </div>
+                <div class="servo-angle-badge" id="servo-angle-display">90°</div>
+              </div>
+
+              <div class="card-body">
+                <div class="servo-dial-container">
+                  <div class="servo-dial">
+                    <div class="servo-arm" id="servo-arm" style="transform: rotate(0deg);"></div>
+                    <div class="servo-center-dot"></div>
+                  </div>
+                </div>
+
+                <div class="slider-group">
+                  <div class="slider-header">
+                    <label for="servo-slider">Posición Angular (0° - 180°):</label>
+                    <span id="servo-slider-val" class="value-badge">90°</span>
+                  </div>
+                  <input type="range" id="servo-slider" min="0" max="180" value="90" oninput="WorkbenchApp.updateServoAngle(this.value)">
+                </div>
+
+                <div class="presets-row">
+                  <button class="btn btn-secondary btn-sm" onclick="WorkbenchApp.setServoPreset(0)">0° (Min)</button>
+                  <button class="btn btn-secondary btn-sm" onclick="WorkbenchApp.setServoPreset(90)">90° (Centro)</button>
+                  <button class="btn btn-secondary btn-sm" onclick="WorkbenchApp.setServoPreset(180)">180° (Max)</button>
+                  <button class="btn btn-action btn-sm" onclick="WorkbenchApp.sweepServo()">🔄 Barrido Auto</button>
+                </div>
+              </div>
+
+              <div class="card-footer">
+                <span class="cmd-preview">Trama: <code id="servo-cmd-code">SET:SERVO:90</code></span>
+              </div>
+            </div>
+
+            <!-- DC MOTOR CARD -->
+            <div class="component-card">
+              <div class="card-header">
+                <div class="component-title">
+                  <span class="comp-icon">⚙️</span>
+                  <div>
+                    <h3>Motor DC (Puente H L298N / Driver)</h3>
+                    <span class="pin-tag">PWM D5 / Dir D6</span>
+                  </div>
+                </div>
+                <span class="status-pill" id="dcmotor-status-pill">DETENIDO</span>
+              </div>
+
+              <div class="card-body">
+                <div class="motor-animation-box">
+                  <div class="spinning-gear" id="motor-gear">⚙️</div>
+                  <div class="motor-info">
+                    <div id="motor-speed-text">Velocidad: 0%</div>
+                    <div id="motor-dir-text">Sentido: --</div>
+                  </div>
+                </div>
+
+                <div class="slider-group">
+                  <div class="slider-header">
+                    <label for="motor-speed-slider">Velocidad PWM (0-100%):</label>
+                    <span id="motor-speed-val" class="value-badge">75%</span>
+                  </div>
+                  <input type="range" id="motor-speed-slider" min="0" max="100" value="75" oninput="WorkbenchApp.updateDcMotorSpeed(this.value)">
+                </div>
+
+                <div class="action-row">
+                  <button class="btn btn-action" onclick="WorkbenchApp.setDcMotor('CW')">↻ Horario (CW)</button>
+                  <button class="btn btn-action" onclick="WorkbenchApp.setDcMotor('CCW')">↺ Antihorario (CCW)</button>
+                  <button class="btn btn-danger" onclick="WorkbenchApp.stopDcMotor()">🛑 DETENER</button>
+                </div>
+              </div>
+
+              <div class="card-footer">
+                <span class="cmd-preview">Trama: <code id="dcmotor-cmd-code">SET:DCMOTOR:75:CW</code></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. DIAGNOSTICS & HEALTH TAB -->
+        <div id="tab-diagnostics" class="tab-pane" role="tabpanel">
+          <div class="panel-header">
+            <h2>Diagnóstico, Telemetría y Estimación de Vida Útil</h2>
+            <p>Monitoreo del desgaste acumulado de componentes y prueba de estrés automatizada de latencia (RTT).</p>
+          </div>
+
+          <!-- STRESS TEST BANNER -->
+          <div class="stress-test-container">
+            <div class="stress-header">
+              <div>
+                <h3>⚡ Test de Estrés & Latencia Hardware</h3>
+                <p>Ejecuta una ráfaga automatizada de 10 paquetes secuenciales para evaluar estabilidad y latencia en milisegundos.</p>
+              </div>
+              <button class="btn btn-primary-pulse" id="btn-stress-test" onclick="WorkbenchApp.runStressTest()">
+                🚀 Iniciar Stress Test (10 Ciclos)
+              </button>
+            </div>
+
+            <div class="stress-progress-bar-track">
+              <div class="stress-progress-bar-fill" id="stress-bar" style="width: 0%;"></div>
+            </div>
+
+            <div class="stress-results-grid">
+              <div class="metric-card">
+                <span class="metric-label">Latencia Mínima</span>
+                <span class="metric-val" id="metric-min-rtt">-- ms</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">Latencia Promedio</span>
+                <span class="metric-val highlight" id="metric-avg-rtt">-- ms</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">Latencia Máxima</span>
+                <span class="metric-val" id="metric-max-rtt">-- ms</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">Pérdida de Paquetes</span>
+                <span class="metric-val success" id="metric-loss">0%</span>
+              </div>
+            </div>
+
+            <!-- LATENCY CANVAS GRAPH -->
+            <div class="canvas-wrapper">
+              <div class="canvas-header">
+                <span>Telemetría RTT en Tiempo Real (ms)</span>
+                <span id="rtt-latest-badge" class="badge-tag">En espera</span>
+              </div>
+              <canvas id="latencyCanvas" width="800" height="180"></canvas>
+            </div>
+          </div>
+
+          <!-- HEALTH & LIFETIME SECTION -->
+          <div class="section-title-row">
+            <h3>🩺 Estado de Salud & Desgaste Estimado de Componentes</h3>
+            <button class="btn btn-secondary btn-sm" onclick="WorkbenchApp.resetHealthMetrics()">🔄 Resetear Métricas</button>
+          </div>
+
+          <div class="health-grid">
+            <!-- COMPONENT HEALTH ITEM: RELAY -->
+            <div class="health-card" id="health-card-relay">
+              <div class="health-card-header">
+                <span class="health-icon">🔌</span>
+                <div class="health-info">
+                  <h4>Módulo Relé (Mecánico)</h4>
+                  <span class="health-sub">Límite Nominal: 100,000 Ciclos</span>
+                </div>
+                <div class="health-badge status-optimal" id="health-badge-relay">🟩 99% Óptimo</div>
+              </div>
+
+              <div class="health-stats">
+                <div class="stat-item">
+                  <span class="stat-lbl">Conmutaciones:</span>
+                  <span class="stat-val" id="cnt-relay-cycles">14</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-lbl">Tiempo Activo:</span>
+                  <span class="stat-val" id="cnt-relay-time">00:04:12</span>
+                </div>
+              </div>
+
+              <div class="meter-bar-track">
+                <div class="meter-bar-fill health-fill-optimal" id="bar-health-relay" style="width: 99%;"></div>
+              </div>
+            </div>
+
+            <!-- COMPONENT HEALTH ITEM: SERVO -->
+            <div class="health-card" id="health-card-servo">
+              <div class="health-card-header">
+                <span class="health-icon">🎯</span>
+                <div class="health-info">
+                  <h4>Servomotor (Engranajes)</h4>
+                  <span class="health-sub">Límite Nominal: 50,000 Pasos</span>
+                </div>
+                <div class="health-badge status-optimal" id="health-badge-servo">🟩 96% Óptimo</div>
+              </div>
+
+              <div class="health-stats">
+                <div class="stat-item">
+                  <span class="stat-lbl">Movimientos:</span>
+                  <span class="stat-val" id="cnt-servo-cycles">85</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-lbl">Tiempo Activo:</span>
+                  <span class="stat-val" id="cnt-servo-time">00:12:40</span>
+                </div>
+              </div>
+
+              <div class="meter-bar-track">
+                <div class="meter-bar-fill health-fill-optimal" id="bar-health-servo" style="width: 96%;"></div>
+              </div>
+            </div>
+
+            <!-- COMPONENT HEALTH ITEM: LED -->
+            <div class="health-card" id="health-card-led">
+              <div class="health-card-header">
+                <span class="health-icon">💡</span>
+                <div class="health-info">
+                  <h4>LED de Estado (Semiconductor)</h4>
+                  <span class="health-sub">Límite Nominal: 500,000 Ciclos</span>
+                </div>
+                <div class="health-badge status-optimal" id="health-badge-led">🟩 100% Óptimo</div>
+              </div>
+
+              <div class="health-stats">
+                <div class="stat-item">
+                  <span class="stat-lbl">Conmutaciones:</span>
+                  <span class="stat-val" id="cnt-led-cycles">28</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-lbl">Tiempo Activo:</span>
+                  <span class="stat-val" id="cnt-led-time">00:22:15</span>
+                </div>
+              </div>
+
+              <div class="meter-bar-track">
+                <div class="meter-bar-fill health-fill-optimal" id="bar-health-led" style="width: 100%;"></div>
+              </div>
+            </div>
+
+            <!-- COMPONENT HEALTH ITEM: SENSOR DHT -->
+            <div class="health-card" id="health-card-dht">
+              <div class="health-card-header">
+                <span class="health-icon">🌡️</span>
+                <div class="health-info">
+                  <h4>Sensor Humedad/Temp (DHT)</h4>
+                  <span class="health-sub">Límite Nominal: 20,000 Muestras</span>
+                </div>
+                <div class="health-badge status-warning" id="health-badge-dht">🟨 78% Desgaste</div>
+              </div>
+
+              <div class="health-stats">
+                <div class="stat-item">
+                  <span class="stat-lbl">Muestreos:</span>
+                  <span class="stat-val" id="cnt-dht-cycles">4,400</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-lbl">Tiempo Activo:</span>
+                  <span class="stat-val" id="cnt-dht-time">01:45:00</span>
+                </div>
+              </div>
+
+              <div class="meter-bar-track">
+                <div class="meter-bar-fill health-fill-warning" id="bar-health-dht" style="width: 78%;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. SERIAL MONITOR TAB -->
+        <div id="tab-console" class="tab-pane" role="tabpanel">
+          <div class="console-wrapper">
+            <div class="console-toolbar">
+              <div class="toolbar-left">
+                <span class="console-title">💻 Terminal Serial Bidireccional</span>
+                <span id="console-rate-tag" class="rate-tag">115200 N 8 1</span>
+              </div>
+
+              <div class="toolbar-right">
+                <label class="checkbox-inline">
+                  <input type="checkbox" id="chk-autoscroll" checked> Auto-scroll
+                </label>
+                <label class="checkbox-inline">
+                  <input type="checkbox" id="chk-pause"> Pausar
+                </label>
+                <select id="console-view-mode" class="custom-select-sm">
+                  <option value="text">Modo Texto (ASCII)</option>
+                  <option value="hex">Modo Hexadecimal</option>
+                </select>
+                <button class="btn btn-sm btn-secondary" onclick="WorkbenchApp.clearConsole()">🧹 Limpiar</button>
+                <button class="btn btn-sm btn-secondary" onclick="WorkbenchApp.exportConsoleLog()">💾 Exportar Log</button>
+              </div>
+            </div>
+
+            <!-- LOG OUTPUT DISPLAY -->
+            <div class="console-log-box" id="console-log">
+              <div class="log-entry sys">[SYSTEM] Workbench listo. Selecciona un puerto USB o el Simulador Virtual.</div>
+            </div>
+
+            <!-- COMMAND INPUT FOOTER -->
+            <div class="console-input-bar">
+              <select id="line-ending-select" class="custom-select-sm">
+                <option value="\r\n">Both NL & CR (\r\n)</option>
+                <option value="\n" selected>Newline (\n)</option>
+                <option value="\r">Carriage Return (\r)</option>
+                <option value="">No line ending</option>
+              </select>
+
+              <div class="input-with-history">
+                <input type="text" id="cmd-input" placeholder="Escribe comando serial (ej: SET:LED:1, GET:DHT, PING:1) y presiona Enter..." autocomplete="off">
+              </div>
+
+              <button class="btn btn-action" onclick="WorkbenchApp.sendCustomCommand()">Enviar ↵</button>
+            </div>
+          </div>
+        <!-- 6. FIRMWARE CODE VIEWER TAB -->
+        <div id="tab-firmware" class="tab-pane" role="tabpanel">
+          <div class="panel-header">
+            <h2>Código Firmware para Microcontroladores</h2>
+            <p>Selecciona tu lenguaje y descarga/copia el código fuente listo para flashear en tu tarjeta.</p>
+          </div>
+
+          <div class="firmware-viewer-container">
+            <div class="firmware-tabs-row">
+              <button class="firmware-lang-btn active" onclick="WorkbenchApp.switchFirmwareLang('cpp')">
+                <span class="lang-icon">⚡</span> Arduino / C++ (Uno, Mega, ESP32, Pico SDK)
+              </button>
+              <button class="firmware-lang-btn" onclick="WorkbenchApp.switchFirmwareLang('python')">
+                <span class="lang-icon">🐍</span> MicroPython (Raspberry Pi Pico, ESP32)
+              </button>
+              <button class="btn btn-sm btn-secondary" style="margin-left: auto;" onclick="WorkbenchApp.copyFirmwareCode()">
+                📋 Copiar Código Fuente
+              </button>
+            </div>
+
+            <pre class="code-preview-box"><code id="firmware-code-display">/* Cargando código firmware... */</code></pre>
+          </div>
+        </div>
+
+      </section>
+    </main>
+
+    <!-- ACADEMIC REPORT MODAL -->
+    <div id="academic-report-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title">
+            <span class="modal-icon">📜</span>
+            <div>
+              <h3>Reporte de Evaluación de Laboratorio</h3>
+              <p class="modal-sub">Interfaces de Control & Inspección de Hardware</p>
+            </div>
+          </div>
+          <button class="btn-close" onclick="WorkbenchApp.closeAcademicReportModal()">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="report-form-grid">
+            <div class="form-group">
+              <label for="rep-student">Nombre del Alumno / Equipo:</label>
+              <input type="text" id="rep-student" class="custom-input" value="Estudiante de Ingeniería Embebida" placeholder="Ingresa tu nombre">
+            </div>
+            <div class="form-group">
+              <label for="rep-subject">Materia / Asignatura:</label>
+              <input type="text" id="rep-subject" class="custom-input" value="Interfaces de Control & Microcontroladores" placeholder="Nombre de la materia">
+            </div>
+            <div class="form-group">
+              <label for="rep-professor">Profesor / Evaluador:</label>
+              <input type="text" id="rep-professor" class="custom-input" value="Profesor de Interfaces de Control" placeholder="Nombre de tu profesor">
+            </div>
+            <div class="form-group">
+              <label for="rep-date">Fecha de Evaluación:</label>
+              <input type="text" id="rep-date" class="custom-input" value="2026-08-20" readonly>
+            </div>
+          </div>
+
+          <div class="report-summary-box">
+            <h4>📊 Resumen Técnico de Telemetría & Desgaste</h4>
+            <table class="report-table">
+              <thead>
+                <tr>
+                  <th>Componente</th>
+                  <th>Ciclos / Muestreos</th>
+                  <th>Tiempo Operación</th>
+                  <th>Índice de Salud</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Módulo Relé Mecánico</td>
+                  <td id="rep-relay-cycles">14</td>
+                  <td id="rep-relay-time">00:04:12</td>
+                  <td><span class="badge-status optimal" id="rep-relay-health">🟩 99% Óptimo</span></td>
+                </tr>
+                <tr>
+                  <td>Servomotor (Engranajes)</td>
+                  <td id="rep-servo-cycles">85</td>
+                  <td id="rep-servo-time">00:12:40</td>
+                  <td><span class="badge-status optimal" id="rep-servo-health">🟩 96% Óptimo</span></td>
+                </tr>
+                <tr>
+                  <td>LED Indicador PWM</td>
+                  <td id="rep-led-cycles">28</td>
+                  <td id="rep-led-time">00:22:15</td>
+                  <td><span class="badge-status optimal" id="rep-led-health">🟩 100% Óptimo</span></td>
+                </tr>
+                <tr>
+                  <td>Sensor DHT / LDR / HC-SR04</td>
+                  <td id="rep-dht-cycles">4,400</td>
+                  <td id="rep-dht-time">01:45:00</td>
+                  <td><span class="badge-status warning" id="rep-dht-health">🟨 78% Desgaste</span></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="report-metrics-row">
+              <div class="rep-metric">
+                <span class="lbl">Latencia RTT Promedio:</span>
+                <span class="val" id="rep-rtt-avg">18 ms</span>
+              </div>
+              <div class="rep-metric">
+                <span class="lbl">Pérdida de Paquetes:</span>
+                <span class="val" id="rep-rtt-loss">0%</span>
+              </div>
+              <div class="rep-metric">
+                <span class="lbl">Estado Protocolo:</span>
+                <span class="val text-success">OK / Validado</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="WorkbenchApp.closeAcademicReportModal()">Cancelar</button>
+          <button class="btn btn-action" onclick="window.print()">🖨️ Imprimir / Guardar en PDF</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- FOOTER -->
+    <footer class="app-footer">
+      <div>
+        <span>Status API: <strong id="api-support-tag" class="text-success">Web Serial OK</strong></span> | 
+        <span>Buffer Rx: <strong id="rx-bytes-count">0 bytes</strong></span> | 
+        <span>Trama Activa: <code id="active-frame-tag">PING:1</code></span>
+      </div>
+      <div>
+        <span>Hardware Testing Workbench &copy; 2026 - Embedded Systems Engineering (10/10 Grade Edition)</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
